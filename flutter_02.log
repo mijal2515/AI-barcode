@@ -1,0 +1,87 @@
+Flutter crash report.
+Please report a bug at https://github.com/flutter/flutter/issues.
+
+## command
+
+flutter analyze
+
+## exception
+
+_Exception: Exception: analysis server exited with code 255 and output:
+[stderr] #7      LspByteStreamServerChannel.listen.<anonymous closure> (package:analysis_server/src/lsp/channel/lsp_byte_stream_channel.dart:67)
+[stderr] #8      _rootRunUnary (dart:async/zone_root.dart:48)
+[stderr] #9      _CustomZone.runUnary (dart:async/zone.dart:733)
+[stderr] #10     _CustomZone.runUnaryGuarded (dart:async/zone.dart:633)
+[stderr] #11     _BufferingStreamSubscription._sendData (dart:async/stream_impl.dart:381)
+[stderr] #12     _DelayedData.perform (dart:async/stream_impl.dart:573)
+[stderr] #13     _PendingEvents.handleNext (dart:async/stream_impl.dart:678)
+[stderr] #14     _PendingEvents.schedule.<anonymous closure> (dart:async/stream_impl.dart:649)
+[stderr] #15     _rootRun (dart:async/zone_root.dart:27)
+[stderr] #16     _CustomZone.run (dart:async/zone.dart:726)
+[stderr] #17     _CustomZone.runGuarded (dart:async/zone.dart:625)
+[stderr] #18     _CustomZone.bindCallbackGuarded.<anonymous closure> (dart:async/zone.dart:666)
+[stderr] #19     _rootRun (dart:async/zone_root.dart:35)
+[stderr] #20     _CustomZone.run (dart:async/zone.dart:726)
+[stderr] #21     _CustomZone.runGuarded (dart:async/zone.dart:625)
+[stderr] #22     _CustomZone.bindCallbackGuarded.<anonymous closure> (dart:async/zone.dart:666)
+[stderr] #23     _microtaskLoop (dart:async/schedule_microtask.dart:40)
+[stderr] #24     _startMicrotaskLoop (dart:async/schedule_microtask.dart:49)
+[stderr] #25     _runPendingImmediateCallback (dart:isolate-patch/isolate_patch.dart:127)
+[stderr] #26     _RawReceivePort._handleMessage (dart:isolate-patch/isolate_patch.dart:193)
+
+```
+```
+
+## flutter doctor
+
+```
+[32m[✓][39m Flutter (Channel stable, 3.44.0, on Microsoft Windows [Version
+    10.0.26200.8737], locale ko-KR) [511ms]
+    [32m•[39m Flutter version 3.44.0 on channel stable at C:\dev\flutter
+    [32m•[39m Upstream repository https://github.com/flutter/flutter.git
+    [32m•[39m Framework revision 559ffa3f75 (7 weeks ago), 2026-05-15 14:13:13 -0700
+    [32m•[39m Engine revision 4c525dac5e
+    [32m•[39m Dart version 3.12.0
+    [32m•[39m DevTools version 2.57.0
+    [32m•[39m Feature flags: enable-web, enable-linux-desktop, enable-macos-desktop,
+      enable-windows-desktop, enable-android, enable-ios, cli-animations,
+      enable-native-assets, enable-swift-package-manager,
+      omit-legacy-version-file, enable-lldb-debugging, enable-uiscene-migration
+
+[32m[✓][39m Windows Version (11 Home 64-bit, 25H2, 2009) [2.4s]
+
+[32m[✓][39m Android toolchain - develop for Android devices (Android SDK version 36.1.0)
+    [3.7s]
+    [32m•[39m Android SDK at C:\Users\mijal\AppData\Local\Android\sdk
+    [32m•[39m Emulator version 36.5.11.0 (build_id 15261927) (CL:N/A)
+    [32m•[39m Platform android-36.1, build-tools 36.1.0
+    [32m•[39m Java binary at: C:\Program Files\Android\Android Studio\jbr\bin\java
+      This is the JDK bundled with the latest Android Studio installation on
+      this machine.
+      To manually set the JDK path, use: `flutter config
+      --jdk-dir="path/to/jdk"`.
+    [32m•[39m Java version OpenJDK Runtime Environment (build
+      21.0.10+-14961533-b1163.108)
+    [32m•[39m All Android licenses accepted.
+
+[32m[✓][39m Chrome - develop for the web [153ms]
+    [32m•[39m Chrome at C:\Program Files\Google\Chrome\Application\chrome.exe
+
+[32m[✓][39m Visual Studio - develop Windows apps (Visual Studio Community 2022 17.9.6)
+    [151ms]
+    [32m•[39m Visual Studio at C:\Program Files\Microsoft Visual Studio\2022\Community
+    [32m•[39m Visual Studio Community 2022 version 17.9.34728.123
+    [32m•[39m Windows 10 SDK version 10.0.22621.0
+
+[32m[✓][39m Connected device (3 available) [354ms]
+    [32m•[39m Windows (desktop) • windows • windows-x64    • Microsoft Windows [Version
+      10.0.26200.8737]
+    [32m•[39m Chrome (web)      • chrome  • web-javascript • Google Chrome 150.0.7871.46
+    [32m•[39m Edge (web)        • edge    • web-javascript • Microsoft Edge
+      150.0.4078.48
+
+[32m[✓][39m Network resources [901ms]
+    [32m•[39m All expected network resources are available.
+
+[32m•[39m No issues found!
+```
