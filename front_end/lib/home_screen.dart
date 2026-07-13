@@ -12,7 +12,7 @@ import 'package:simple_barcode_scanner/simple_barcode_scanner.dart';
 
 import 'app_widgets.dart';
 
-const String SERVER_URL = 'http://127.0.0.1:8000';
+const String SERVER_URL = 'https://port-0-ai-barcode-mripc4hw74b4a446.sel3.cloudtype.app';
 
 class InstrumentLibraryScreen extends StatefulWidget {
   const InstrumentLibraryScreen({super.key});
