@@ -10,9 +10,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:universal_html/html.dart' as html;
 import 'package:simple_barcode_scanner/simple_barcode_scanner.dart';
 
-import 'app_widgets.dart';
+import 'app_theme.dart';
 
-const String SERVER_URL = 'http://172.16.165.143:8000';
+// ⚠️ 클라우드타입 배포 후에는 대시보드에서 발급된 주소(예: https://xxxx.svc.cloudtype.app)로 바꿔주세요.
+// 로컬 PC에서만 테스트할 때는 "ipconfig"로 확인한 PC의 Wi-Fi IPv4 주소를 사용하면 됩니다
+// (이 경우 폰과 PC가 반드시 같은 Wi-Fi에 연결되어 있어야 합니다).
+const String serverUrl = 'http://192.168.198.136:8000';
 
 class InstrumentLibraryScreen extends StatefulWidget {
   const InstrumentLibraryScreen({super.key});
@@ -73,10 +76,13 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     final query = _historySearchController.text.toLowerCase();
     setState(() {
       _filteredHistoryLogs = _historyLogs.where((log) {
-        final content = (log['content'] ?? '').toString().toLowerCase();
+        final barcode = (log['barcode'] ?? '').toString().toLowerCase();
+        final name = (log['name'] ?? '').toString().toLowerCase();
+        final school = (log['school'] ?? '').toString().toLowerCase();
         final time = (log['time'] ?? '').toString().toLowerCase();
         final type = (log['type'] ?? '').toString().toLowerCase();
-        return content.contains(query) || time.contains(query) || type.contains(query);
+        return barcode.contains(query) || name.contains(query) || school.contains(query) ||
+            time.contains(query) || type.contains(query);
       }).toList();
     });
   }
@@ -143,32 +149,51 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
       return;
     }
 
-    String timeNow = "${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}";
+    final DateTime now = DateTime.now();
+    String timeNow = "${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} "
+        "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
     String newStatus = actionType == '출고' ? '대여중' : '보관중';
     int count = targetCart.length;
 
     try {
       for (var scannedItem in targetCart) {
-        String contentText = actionType == '출고'
-            ? '${scannedItem['name']} (${scannedItem['barcode']}) ➡️ [$schoolText]'
-            : '${scannedItem['name']} (${scannedItem['barcode']}) [반납 완료]';
+        // 🎯 출고는 지금 입력한 학교로, 입고는 반납되기 직전까지 대여 중이던 학교로 기록
+        String schoolForHistory = actionType == '출고'
+            ? schoolText
+            : (scannedItem['school'] ?? '').toString();
 
-        var url = Uri.parse('$SERVER_URL/history');
+        var url = Uri.parse('$serverUrl/history');
         await http.post(
           url,
           headers: {"Content-Type": "application/json"},
           body: jsonEncode({
             "time": timeNow,
             "type": actionType,
-            "content": contentText,
+            "barcode": scannedItem['barcode'].toString(),
+            "name": scannedItem['name'].toString(),
+            "school": schoolForHistory,
           }),
         );
+
+        String newSchool = actionType == '출고' ? schoolText : '';
 
         int index = _allInstruments.indexWhere((item) => item['barcode'].toString() == scannedItem['barcode'].toString());
         if (index != -1) {
           _allInstruments[index]['status'] = newStatus;
-          _allInstruments[index]['school'] = actionType == '출고' ? schoolText : '';
+          _allInstruments[index]['school'] = newSchool;
         }
+
+        // 🎯 상태 변경을 DB(instruments 테이블)에도 저장해서 앱/서버를 재시작해도 상태가 유지되도록 함
+        var updateUrl = Uri.parse('$serverUrl/instruments/${scannedItem['barcode']}');
+        await http.put(
+          updateUrl,
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "name": scannedItem['name'].toString(),
+            "status": newStatus,
+            "school": newSchool,
+          }),
+        );
       }
 
       await _fetchHistoryLogs();
@@ -188,6 +213,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
       _showSnackBar('❌ DB 기록 저장 중 네트워크 오류 발생');
     }
 
+    if (!mounted) return;
     FocusScope.of(context).unfocus();
   }
 
@@ -199,7 +225,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
 
     try {
-      var url = Uri.parse('$SERVER_URL/history/delete-multiple');
+      var url = Uri.parse('$serverUrl/history/delete-multiple');
       var response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},
@@ -231,7 +257,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
 
     try {
-      var url = Uri.parse('$SERVER_URL/instruments');
+      var url = Uri.parse('$serverUrl/instruments');
       var response = await http.post(
         url,
         headers: {"Content-Type": "application/json"},
@@ -259,6 +285,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     } catch (e) {
       _showSnackBar('❌ 네트워크 오류: 파이썬 백엔드 서버가 켜져 있는지 확인하세요.');
     }
+    if (!mounted) return;
     FocusScope.of(context).unfocus();
   }
 
@@ -271,31 +298,31 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text('✏️ [${instrument['name']}] 정보 수정', style: const TextStyle(fontWeight: FontWeight.bold)),
+          title: Text('[${instrument['name']}] 정보 수정'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: TextEditingController(text: instrument['barcode']),
-                  decoration: const InputDecoration(labelText: '바코드 (수정 불가)'),
+                  decoration: const InputDecoration(labelText: '바코드 (수정 불가)', prefixIcon: Icon(Icons.qr_code_rounded)),
                   readOnly: true,
-                  style: const TextStyle(color: Colors.grey),
+                  style: const TextStyle(color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: nameController,
-                  decoration: const InputDecoration(labelText: '악기 이름'),
+                  decoration: const InputDecoration(labelText: '악기 이름', prefixIcon: Icon(Icons.music_note_rounded)),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: statusController,
-                  decoration: const InputDecoration(labelText: '상태 (보관중 / 대여중)'),
+                  decoration: const InputDecoration(labelText: '상태 (보관중 / 대여중)', prefixIcon: Icon(Icons.flag_rounded)),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: schoolController,
-                  decoration: const InputDecoration(labelText: '대여처 (학교명)'),
+                  decoration: const InputDecoration(labelText: '대여처 (학교명)', prefixIcon: Icon(Icons.school_rounded)),
                 ),
               ],
             ),
@@ -303,10 +330,9 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('취소', style: TextStyle(color: Colors.grey)),
+              child: const Text('취소'),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6B7BFF)),
               onPressed: () async {
                 String newName = nameController.text.trim();
                 String newStatus = statusController.text.trim();
@@ -318,7 +344,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                 }
 
                 try {
-                  var url = Uri.parse('$SERVER_URL/instruments/${instrument['barcode']}');
+                  var url = Uri.parse('$serverUrl/instruments/${instrument['barcode']}');
                   var response = await http.put(
                     url,
                     headers: {"Content-Type": "application/json"},
@@ -332,6 +358,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                   if (response.statusCode == 200) {
                     var decodedData = jsonDecode(utf8.decode(response.bodyBytes));
                     if (decodedData['status'] == 'success') {
+                      if (!context.mounted) return;
                       Navigator.pop(context);
                       _showSnackBar('🎉 악기 정보가 수정되었습니다.');
                       await _fetchInstruments();
@@ -360,7 +387,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
   Future<void> _fetchInstruments() async {
     setState(() => _isLoading = true);
     try {
-      var url = Uri.parse('$SERVER_URL/instruments');
+      var url = Uri.parse('$serverUrl/instruments');
       var response = await http.get(url);
       if (response.statusCode == 200) {
         var decodedData = jsonDecode(utf8.decode(response.bodyBytes));
@@ -379,7 +406,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
   Future<void> _deleteInstrument(String barcode) async {
     try {
       final String safeBarcode = Uri.encodeComponent(barcode.trim());
-      var url = Uri.parse('http://localhost:8000/instruments/$safeBarcode');
+      var url = Uri.parse('$serverUrl/instruments/$safeBarcode');
       var response = await http.delete(url);
       
       if (response.statusCode == 200) {
@@ -400,7 +427,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
 
   Future<void> _fetchHistoryLogs() async {
     try {
-      var url = Uri.parse('$SERVER_URL/history');
+      var url = Uri.parse('$serverUrl/history');
       var response = await http.get(url);
       if (response.statusCode == 200) {
         var decodedData = jsonDecode(utf8.decode(response.bodyBytes));
@@ -427,7 +454,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         if (fileBytes == null) return;
 
         _showSnackBar('⏳ 엑셀 데이터를 서버로 전송 중입니다...');
-        var uri = Uri.parse('$SERVER_URL/upload-excel');
+        var uri = Uri.parse('$serverUrl/upload-excel');
         var request = http.MultipartRequest('POST', uri);
         request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
 
@@ -444,86 +471,208 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
   }
 
+  // 📜 엑셀(.xlsx)로 입출고 기록을 읽어 DB(history)에 대량 저장
+  Future<void> _uploadHistoryExcelToServer() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls'],
+        withData: true,
+      );
+      if (result == null) return;
+
+      var fileBytes = result.files.first.bytes;
+      var fileName = result.files.first.name;
+      if (fileBytes == null) return;
+
+      _showSnackBar('⏳ 기록 엑셀 데이터를 서버로 전송 중입니다...');
+      var uri = Uri.parse('$serverUrl/history/import');
+      var request = http.MultipartRequest('POST', uri);
+      request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
+
+      var response = await request.send();
+      var responseBody = await http.Response.fromStream(response);
+
+      if (response.statusCode == 200) {
+        var decodedData = jsonDecode(utf8.decode(responseBody.bodyBytes));
+        if (decodedData['status'] == 'success') {
+          _showSnackBar('🎉 ${decodedData['message']}');
+          await _fetchHistoryLogs();
+        } else {
+          _showSnackBar('❌ 기록 업로드 실패: ${decodedData['message']}');
+        }
+      } else {
+        _showSnackBar('❌ 서버가 기록 엑셀 처리에 실패했습니다. (코드: ${response.statusCode})');
+      }
+    } catch (e) {
+      _showSnackBar("❌ 오류 발생: $e");
+    }
+  }
+
   // 🔥 핵심 수정: id 기반 매칭으로 엑셀 출력하도록 변경
-  void _downloadSelectedToExcel() {
+  Future<void> _downloadSelectedToExcel() async {
     if (_selectedIds.isEmpty) {
-      _showSnackBar('⚠️ 다운로드할 기록을 먼저 선택해 주세요!');
+      _showSnackBar('❗ 다운로드할 기록을 먼저 선택해 주세요.');
       return;
     }
 
-    final workbook = Excel.createExcel();
-    final sheetObject = workbook['Sheet1'];
+    try {
+      // 1. 새로운 엑셀 워크북 및 시트 생성
+      var excel = Excel.createExcel();
+      String sheetName = "입출고기록";
+      
+      // [수정] defaultSheet 이름 변경 방식을 안전하게 수정하거나, 링크가 깨지지 않게 직접 접근
+      String defaultSheet = excel.getDefaultSheet() ?? 'Sheet1';
+      excel.rename(defaultSheet, sheetName);
+      Sheet sheetObject = excel[sheetName];
 
-    sheetObject.appendRow([
-      TextCellValue('시간'),
-      TextCellValue('구분'),
-      TextCellValue('악기명'),
-      TextCellValue('바코드'),
-      TextCellValue('대여처/상태'),
-    ]);
-
-    for (var log in _historyLogs) {
-      if (log['id'] != null && _selectedIds.contains(log['id'])) {
-        String content = log['content'] ?? '';
-        String instrumentName = content;
-        String barcode = '';
-        String locationOrStatus = '';
-
-        RegExp exp = RegExp(r'\((.*?)\)');
-        Match? match = exp.firstMatch(content);
-
-        if (match != null) {
-          barcode = match.group(1) ?? '';
-          instrumentName = content.substring(0, match.start).trim();
-          instrumentName = instrumentName.replaceAll('수동 추가: ', '').replaceAll('악기 삭제됨: ', '').trim();
-
-          String afterText = content.substring(match.end).trim();
-          if (afterText.startsWith('➡️ [')) {
-            locationOrStatus = afterText.replaceAll('➡️ [', '').replaceAll(']', '').trim();
-          } else if (afterText.contains('[반납 완료]')) {
-            locationOrStatus = '반납 완료';
-          } else {
-            locationOrStatus = afterText;
-          }
-        }
-
-        sheetObject.appendRow([
-          TextCellValue(log['time'] ?? ''),
-          TextCellValue(log['type'] ?? ''),
-          TextCellValue(instrumentName),
-          TextCellValue(barcode),
-          TextCellValue(locationOrStatus),
-        ]);
+      // 3. 타이틀 헤더 추가
+      List<String> headers = ["시간", "구분", "바코드", "물품명", "대여처"];
+      for (int i = 0; i < headers.length; i++) {
+        var cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
+        
+        // [수정] 최신 excel 패키지는 TextCellValue 형태로 값을 넣어야 에러가 나지 않습니다.
+        cell.value = TextCellValue(headers[i]);
       }
-    }
 
-    final fileBytes = workbook.encode();
-    if (fileBytes != null) {
-      final fileName = "DB_악기_입출고_기록_${DateTime.now().toString().substring(0,10)}.xlsx";
+      // 4. 선택된 ID에 해당하는 데이터 필터링 (아래 5번 루프에서도 동일하게 수정)
+      List<dynamic> selectedLogs = _historyLogs
+          .where((log) => _selectedIds.contains(log['id']))
+          .toList();
+          
+      selectedLogs.sort((a, b) => (b['id'] ?? 0).compareTo(a['id'] ?? 0));
 
+      // 5. 엑셀 시트에 데이터 채우기
+      for (int i = 0; i < selectedLogs.length; i++) {
+        final log = selectedLogs[i];
+        
+        String timeValue = log['time'] ?? '';
+        String typeValue = log['type'] ?? '';
+        String barcodeValue = log['barcode'] ?? '';
+        String nameValue = log['name'] ?? '';
+        String schoolValue = log['school'] ?? '';
+
+        // [수정] 일반 문자열을 TextCellValue로 감싸서 대입
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: i + 1)).value = TextCellValue(timeValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: i + 1)).value = TextCellValue(typeValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: i + 1)).value = TextCellValue(barcodeValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: i + 1)).value = TextCellValue(nameValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: i + 1)).value = TextCellValue(schoolValue);
+      }
+
+      // ... 하단 저장 및 공유(kIsWeb) 로직은 그대로 유지하시면 됩니다 ...
+
+      // 6. 파일 저장 및 다운로드 처리 (웹 환경 및 모바일 환경 대응)
+      // 웹(Web) 환경 브라우저 다운로드 대응
       if (kIsWeb) {
-        // 💻 기존 PC (웹 브라우저) 전용 다운로드 방식
-        final blob = html.Blob([fileBytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        final url = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: url)
-          ..setAttribute("download", fileName)
-          ..click();
-        html.Url.revokeObjectUrl(url);
-        _showSnackBar('📊 선택한 ${_selectedIds.length}건의 기록이 엑셀로 다운로드되었습니다!');
+        final bytes = excel.encode();
+        if (bytes != null) {
+          final blob = html.Blob([bytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          final url = html.Url.createObjectUrlFromBlob(blob);
+          html.AnchorElement(href: url)
+            ..setAttribute("download", "DB_악기_입출고_기록.xlsx")
+            ..click();
+          html.Url.revokeObjectUrl(url);
+          _showSnackBar('📥 선택한 ${_selectedIds.length}건의 기록이 엑셀 파일로 다운로드되었습니다.');
+        }
       } else {
-        // 📱 모바일 (Android/iOS) 전용 다운로드 방식
-        getDownloadsDirectory().then((directory) async {
-          if (directory != null) {
-            final filePath = '${directory.path}/$fileName';
-            final file = io.File(filePath);
-            await file.writeAsBytes(fileBytes);
-            _showSnackBar('📁 모바일 다운로드 폴더에 저장되었습니다!');
-          }
-        }).catchError((e) {
-          _showSnackBar('❌ 모바일 파일 저장 실패: $e');
-        });
+        // 모바일/PC 네이티브 환경 대응 (공유 및 저장 폴더 지정)
+        final bytes = excel.encode();
+        if (bytes != null) {
+          final directory = await getApplicationDocumentsDirectory();
+          final filePath = "${directory.path}/DB_history_${DateTime.now().millisecondsSinceEpoch}.xlsx";
+          final file = io.File(filePath);
+          await file.writeAsBytes(bytes);
+          
+          // 다운로드 완료 후 파일 열기 또는 공유 기능 연동 (Share 패키지 등 사용 시)
+          _showSnackBar('📥 파일이 성공적으로 저장되었습니다: $filePath');
+        }
       }
+    } catch (e) {
+      _showSnackBar('❌ 엑셀 다운로드 중 오류가 발생했습니다: $e');
     }
+  }
+
+  // 🏠 시작메뉴: 현황을 한눈에 보여주고 각 기능으로 바로 이동하는 홈 화면
+  Widget _buildHomeTab() {
+    final int total = _allInstruments.length;
+    final int storedCount = _allInstruments.where((e) => (e['status'] ?? '보관중') == '보관중').length;
+    final int rentedCount = _allInstruments.where((e) => (e['status'] ?? '') == '대여중').length;
+
+    return ListView(
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.library_music_rounded, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 14),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('해봄악기도서관', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
+                  SizedBox(height: 2),
+                  Text('필요한 메뉴를 선택해 주세요', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 22),
+        Row(
+          children: [
+            Expanded(child: _HomeStatTile(label: '전체 악기', value: total, palette: StatusPalette.checkin)),
+            const SizedBox(width: 10),
+            Expanded(child: _HomeStatTile(label: '보관중', value: storedCount, palette: StatusPalette.stored)),
+            const SizedBox(width: 10),
+            Expanded(child: _HomeStatTile(label: '대여중', value: rentedCount, palette: StatusPalette.rented)),
+          ],
+        ),
+        const SizedBox(height: 22),
+        Column(
+          children: [
+            _HomeMenuCard(
+              icon: Icons.swap_horiz_rounded,
+              title: '입출고관리',
+              subtitle: '바코드로 대여·반납 처리',
+              palette: StatusPalette.rented,
+              onTap: () => setState(() => _currentIndex = 1),
+            ),
+            const SizedBox(height: 10),
+            _HomeMenuCard(
+              icon: Icons.inventory_2_rounded,
+              title: '악기현황',
+              subtitle: '보유 악기 목록 조회',
+              palette: StatusPalette.stored,
+              onTap: () => setState(() => _currentIndex = 2),
+            ),
+            const SizedBox(height: 10),
+            _HomeMenuCard(
+              icon: Icons.history_rounded,
+              title: '기록확인',
+              subtitle: '입출고 이력 검색·다운로드',
+              palette: StatusPalette.checkin,
+              onTap: () => setState(() => _currentIndex = 3),
+            ),
+            const SizedBox(height: 10),
+            _HomeMenuCard(
+              icon: Icons.settings_rounded,
+              title: '데이터관리',
+              subtitle: '엑셀 업로드·악기 등록',
+              palette: StatusPalette.primary,
+              onTap: () => setState(() => _currentIndex = 4),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   Widget _buildCheckInOutTab() {
@@ -532,24 +681,30 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
       child: Column(
         children: [
           Container(
-            decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border),
+            ),
             child: TabBar(
               labelColor: Colors.white,
-              unselectedLabelColor: Colors.grey.shade600,
+              unselectedLabelColor: AppColors.textSecondary,
               indicatorSize: TabBarIndicatorSize.tab,
-              indicator: BoxDecoration(borderRadius: BorderRadius.circular(12), color: const Color(0xFF6B7BFF)),
+              dividerColor: Colors.transparent,
+              indicator: BoxDecoration(borderRadius: BorderRadius.circular(7), color: AppColors.primary),
               tabs: const [
-                Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.upload_sharp, size: 18), SizedBox(width: 6), Text('악기 출고 (대여)', style: TextStyle(fontWeight: FontWeight.bold))])),
-                Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.download_sharp, size: 18), SizedBox(width: 6), Text('악기 입고 (반납)', style: TextStyle(fontWeight: FontWeight.bold))])),
+                Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.upload_rounded, size: 18), SizedBox(width: 6), Text('악기 출고 (대여)', style: TextStyle(fontWeight: FontWeight.bold))])),
+                Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.download_rounded, size: 18), SizedBox(width: 6), Text('악기 입고 (반납)', style: TextStyle(fontWeight: FontWeight.bold))])),
               ],
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 16),
           Expanded(
             child: TabBarView(
               children: [
-                _buildSubActionPage('출고', _checkoutBarcodeController, _checkoutCart, Colors.orange),
-                _buildSubActionPage('입고', _checkinBarcodeController, _checkinCart, Colors.blue),
+                _buildSubActionPage('출고', _checkoutBarcodeController, _checkoutCart, StatusPalette.rented),
+                _buildSubActionPage('입고', _checkinBarcodeController, _checkinCart, StatusPalette.checkin),
               ],
             ),
           ),
@@ -558,9 +713,10 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     );
   }
 
-  Widget _buildSubActionPage(String type, TextEditingController controller, List<dynamic> cart, Color themeColor) {
+  Widget _buildSubActionPage(String type, TextEditingController controller, List<dynamic> cart, StatusPalette palette) {
+    final Color themeColor = palette.fg;
     return Padding(
-      padding: const EdgeInsets.all(4.0),
+      padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 6.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -570,22 +726,13 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
             decoration: InputDecoration(
               hintText: '바코드를 스캔하거나 입력 후 Enter ($type 모드)',
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade300, width: 1.5)),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: themeColor, width: 2)),
-              prefixIcon: Icon(Icons.qr_code_scanner, color: themeColor),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: themeColor, width: 1.6)),
+              prefixIcon: Icon(Icons.qr_code_scanner_rounded, color: themeColor),
               suffixIcon: IconButton(
-                icon: const Icon(Icons.camera_alt, color: Colors.blueAccent),
+                icon: Icon(Icons.camera_alt_rounded, color: AppColors.primary),
                 tooltip: '휴대폰 카메라로 스캔',
                 onPressed: () async {
-                  var res = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SimpleBarcodeScannerPage(),
-                    ),
-                  );
+                  var res = await SimpleBarcodeScanner.scanBarcode(context);
                   if (res is String && res != '-1') {
                     _addToCart(res, type); // 카메라로 스캔한 결과물 자동 장바구니 추가
                   }
@@ -594,97 +741,115 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
             ),
             onSubmitted: (value) => _addToCart(value, type),
           ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
+          const SizedBox(height: 16),
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.list_alt_rounded, color: Colors.grey.shade700, size: 20),
-                  const SizedBox(width: 6),
-                  Text('$type 대기 목록', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(color: themeColor.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-                    child: Text('${cart.length}개', style: TextStyle(color: themeColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.list_alt_rounded, color: AppColors.textSecondary, size: 20),
+                          const SizedBox(width: 6),
+                          Text('$type 대기 목록', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                            decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(10)),
+                            child: Text('${cart.length}개', style: TextStyle(color: themeColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ],
+                      ),
+                      if (cart.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () => setState(() => type == '출고' ? _checkoutCart.clear() : _checkinCart.clear()),
+                          icon: const Icon(Icons.delete_outline_rounded, size: 16, color: AppColors.danger),
+                          label: const Text('전체 비우기', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.bold)),
+                        )
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: cart.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.center_focus_weak_rounded, size: 40, color: AppColors.border),
+                                const SizedBox(height: 8),
+                                const Text('스캔된 악기가 없습니다. 바코드를 찍어주세요.', style: TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: cart.length,
+                            separatorBuilder: (_, _) => const SizedBox(height: 8),
+                            itemBuilder: (context, index) {
+                              final item = cart[index];
+                              return Container(
+                                decoration: BoxDecoration(
+                                  color: AppColors.background,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                                  leading: Container(
+                                    width: 38,
+                                    height: 38,
+                                    decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(8)),
+                                    child: Icon(Icons.music_note_rounded, color: themeColor, size: 19),
+                                  ),
+                                  title: Text(item['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppColors.textPrimary)),
+                                  subtitle: Text('바코드: ${item['barcode']}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.cancel_rounded, color: AppColors.textSecondary),
+                                    onPressed: () => setState(() => cart.removeAt(index)),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                   ),
                 ],
               ),
-              if (cart.isNotEmpty)
-                TextButton.icon(
-                  onPressed: () => setState(() => type == '출고' ? _checkoutCart.clear() : _checkinCart.clear()),
-                  icon: const Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
-                  label: const Text('전체 비우기', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-                )
-            ],
-          ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: cart.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.center_focus_weak_rounded, size: 40, color: Colors.grey.shade300),
-                        const SizedBox(height: 8),
-                        Text('스캔된 악기가 없습니다. 바코드를 찍어주세요.', style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    itemCount: cart.length,
-                    itemBuilder: (context, index) {
-                      final item = cart[index];
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: themeColor.withOpacity(0.2), width: 1),
-                          boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.04), blurRadius: 4, offset: const Offset(0, 2))],
-                        ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                          title: Text(item['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                          subtitle: Text('바코드: ${item['barcode']}', style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.cancel_rounded, color: Colors.grey),
-                            onPressed: () => setState(() => cart.removeAt(index)),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+            ),
           ),
           const SizedBox(height: 15),
           if (type == '출고') ...[
             TextField(
               controller: _schoolController,
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade800),
+              style: TextStyle(fontWeight: FontWeight.bold, color: themeColor),
               decoration: InputDecoration(
-                labelText: '🏫 출고 대상 학교 입력',
-                labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                labelText: '출고 대상 학교 입력',
+                labelStyle: TextStyle(color: themeColor, fontWeight: FontWeight.bold),
                 hintText: '예시: 서울초등학교',
-                filled: true,
-                fillColor: Colors.orange.withOpacity(0.03),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orangeAccent, width: 1.5)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
-                prefixIcon: const Icon(Icons.school, color: Colors.orange),
+                fillColor: palette.bg,
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: themeColor.withValues(alpha: 0.35), width: 1.2)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: themeColor, width: 1.6)),
+                prefixIcon: Icon(Icons.school_rounded, color: themeColor),
               ),
             ),
             const SizedBox(height: 15),
           ],
           SizedBox(
             width: double.infinity,
-            height: 56,
+            height: 52,
             child: ElevatedButton(
               onPressed: () => _completeBatchAction(type),
               style: ElevatedButton.styleFrom(
                 backgroundColor: themeColor,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                elevation: 1,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -701,17 +866,78 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     );
   }
 
+  /// 악기 이름별로 묶어 총 보유 수량 / 보관중 / 대여중 개수를 계산.
+  List<MapEntry<String, List<dynamic>>> _groupInstrumentsByName() {
+    final Map<String, List<dynamic>> grouped = {};
+    for (final item in _allInstruments) {
+      final String name = (item['name'] ?? '이름 없음').toString();
+      grouped.putIfAbsent(name, () => []).add(item);
+    }
+    final entries = grouped.entries.toList()
+      ..sort((a, b) => b.value.length.compareTo(a.value.length));
+    return entries;
+  }
+
+  Widget _buildInstrumentSummaryStrip() {
+    final entries = _groupInstrumentsByName();
+    if (entries.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(left: 2, bottom: 8),
+          child: Text('품목별 보유 수량', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textSecondary)),
+        ),
+        SizedBox(
+          height: 98,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: entries.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final String name = entries[index].key;
+              final List<dynamic> items = entries[index].value;
+              final int total = items.length;
+              final int stored = items.where((e) => (e['status'] ?? '보관중') == '보관중').length;
+              final int rented = total - stored;
+
+              return Container(
+                width: 134,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+                    const SizedBox(height: 4),
+                    Text('$total개', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: AppColors.primary)),
+                    const Spacer(),
+                    Text('보관 $stored · 대여 $rented', style: const TextStyle(fontSize: 10.5, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildInventoryTab() {
     return Column(
       children: [
+        _buildInstrumentSummaryStrip(),
+        const SizedBox(height: 16),
         TextField(
           controller: _searchController,
-          decoration: InputDecoration(
-            hintText: '🔍 바코드, 악기명 또는 대여 중인 학교 검색...',
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-            prefixIcon: const Icon(Icons.search),
+          decoration: const InputDecoration(
+            hintText: '바코드, 악기명 또는 대여 중인 학교 검색...',
+            prefixIcon: Icon(Icons.search_rounded, color: AppColors.textSecondary),
           ),
         ),
         const SizedBox(height: 15),
@@ -719,7 +945,16 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
               : _filteredInstruments.isEmpty
-                  ? const Center(child: Text('검색 결과가 없습니다.'))
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.inventory_2_outlined, size: 40, color: AppColors.border),
+                          const SizedBox(height: 8),
+                          const Text('검색 결과가 없습니다.', style: TextStyle(color: AppColors.textSecondary)),
+                        ],
+                      ),
+                    )
                   : ListView.builder(
                       itemCount: _filteredInstruments.length,
                       itemBuilder: (context, index) {
@@ -727,71 +962,80 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                         final String status = item['status'] ?? '보관중';
                         final String school = item['school'] ?? '';
                         final bool isRented = status == '대여중';
+                        final StatusPalette palette = isRented ? StatusPalette.rented : StatusPalette.stored;
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          elevation: 1.5,
                           child: Padding(
-                            padding: const EdgeInsets.all(18.0),
+                            padding: const EdgeInsets.all(16.0),
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                CircleAvatar(
-                                  radius: 22,
-                                  backgroundColor: isRented ? Colors.orange.withOpacity(0.1) : Colors.green.withOpacity(0.1),
-                                  child: Icon(isRented ? Icons.output_sharp : Icons.gavel_sharp, color: isRented ? Colors.orange : Colors.green),
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(10)),
+                                  child: Icon(isRented ? Icons.local_shipping_rounded : Icons.inventory_2_rounded, color: palette.fg, size: 22),
                                 ),
-                                const SizedBox(width: 16),
+                                const SizedBox(width: 14),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(item['name'] ?? '이름 없음', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                      const SizedBox(height: 6),
-                                      Text('바코드: ${item['barcode']}', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                                      Text(item['name'] ?? '이름 없음', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary)),
+                                      const SizedBox(height: 4),
+                                      Text('바코드: ${item['barcode']}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+                                      if (isRented && school.isNotEmpty) ...[
+                                        const SizedBox(height: 6),
+                                        Row(
+                                          children: [
+                                            Icon(Icons.school_rounded, size: 14, color: palette.fg),
+                                            const SizedBox(width: 4),
+                                            Text(school, style: TextStyle(color: palette.fg, fontWeight: FontWeight.bold, fontSize: 12.5)),
+                                          ],
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
+                                const SizedBox(width: 8),
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                                      decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(6)),
+                                      child: Text(status, style: TextStyle(color: palette.fg, fontSize: 12, fontWeight: FontWeight.bold)),
+                                    ),
+                                    const SizedBox(height: 10),
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                          decoration: BoxDecoration(color: isRented ? Colors.orange : Colors.green, borderRadius: BorderRadius.circular(20)),
-                                          child: Text(status, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        IconButton(
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          icon: const Icon(Icons.edit, color: Colors.blue, size: 24),
+                                        _RoundIconButton(
+                                          icon: Icons.edit_rounded,
+                                          color: AppColors.info,
                                           tooltip: '악기 정보 수정',
                                           onPressed: () => _showEditDialog(item),
                                         ),
-                                        const SizedBox(width: 8),
-                                        IconButton(
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          icon: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent, size: 24),
+                                        const SizedBox(width: 6),
+                                        _RoundIconButton(
+                                          icon: Icons.delete_rounded,
+                                          color: AppColors.danger,
                                           tooltip: '악기 삭제',
                                           onPressed: () {
                                             showDialog(
                                               context: context,
                                               builder: (BuildContext context) {
                                                 return AlertDialog(
-                                                  title: const Text('⚠️ 삭제 확인', style: TextStyle(fontWeight: FontWeight.bold)),
+                                                  title: const Text('삭제 확인'),
                                                   content: Text('[${item['name']}] 악기를 영구 삭제하시겠습니까?'),
                                                   actions: [
                                                     TextButton(
-                                                      child: const Text('취소', style: TextStyle(color: Colors.grey)),
+                                                      child: const Text('취소'),
                                                       onPressed: () => Navigator.of(context).pop(),
                                                     ),
                                                     TextButton(
-                                                      child: const Text('삭제', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                                                      child: const Text('삭제', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.bold)),
                                                       onPressed: () {
                                                         Navigator.of(context).pop();
                                                         _deleteInstrument(item['barcode'].toString());
@@ -805,10 +1049,6 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                                         ),
                                       ],
                                     ),
-                                    if (isRented && school.isNotEmpty) ...[
-                                      const SizedBox(height: 8),
-                                      Text('🏫 $school', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 13)),
-                                    ],
                                   ],
                                 ),
                               ],
@@ -824,75 +1064,76 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
 
   // 🔥 핵심 수정: UI 체크박스를 ID 기반으로 연동하도록 변경한 탭
   Widget _buildHistoryTab() {
-    bool isAllSelected = _filteredHistoryLogs.isNotEmpty && 
+    // 검색된 결과와 선택된 항목의 개수가 일치하는지 확인하여 전체 선택 상태 결정
+    bool isAllSelected = _filteredHistoryLogs.isNotEmpty &&
         _selectedIds.length == _filteredHistoryLogs.length;
 
     return Column(
       children: [
+        // 상단: 검색 바
+        TextField(
+          controller: _historySearchController,
+          decoration: const InputDecoration(
+            hintText: 'DB 기록 검색 (학교명, 악기명 등)...',
+            prefixIcon: Icon(Icons.search_rounded, color: AppColors.textSecondary),
+          ),
+        ),
+        const SizedBox(height: 10),
+        // 액션 버튼: 엑셀 다운로드 / 선택 삭제
         Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _historySearchController,
-                decoration: InputDecoration(
-                  hintText: '🔍 DB 기록 검색 (학교명, 악기명 등)...',
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              child: OutlinedButton.icon(
+                onPressed: _downloadSelectedToExcel,
+                icon: const Icon(Icons.file_download_rounded, size: 18),
+                label: Text('엑셀 다운로드 (${_selectedIds.length})'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.success,
+                  side: const BorderSide(color: AppColors.success, width: 1.4),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
                 ),
               ),
             ),
-            const SizedBox(width: 10),
-            ElevatedButton.icon(
-              onPressed: _downloadSelectedToExcel,
-              icon: const Icon(Icons.border_all_rounded, size: 18),
-              label: Text('엑셀 다운로드 (${_selectedIds.length})'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green.shade700,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
             const SizedBox(width: 8),
-            ElevatedButton.icon(
-              onPressed: () {
-                if (_selectedIds.isEmpty) return;
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('⚠️ 기록 삭제 확인', style: TextStyle(fontWeight: FontWeight.bold)),
-                    content: Text('선택한 ${_selectedIds.length}개의 입출고 기록을 데이터베이스에서 영구 삭제하시겠습니까?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('취소', style: TextStyle(color: Colors.grey)),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          _deleteSelectedHistoryLogs();
-                        },
-                        child: const Text('삭제', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                );
-              },
-              icon: const Icon(Icons.delete_forever_rounded, size: 18),
-              label: const Text('선택 삭제'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _selectedIds.isEmpty ? Colors.grey.shade300 : Colors.redAccent,
-                foregroundColor: _selectedIds.isEmpty ? Colors.grey.shade500 : Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  if (_selectedIds.isEmpty) return;
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('기록 삭제 확인'),
+                      content: Text('선택한 ${_selectedIds.length}개의 입출고 기록을 데이터베이스에서 영구 삭제하시겠습니까?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('취소'),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _deleteSelectedHistoryLogs();
+                          },
+                          child: const Text('삭제', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.bold)),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                label: const Text('선택 삭제'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _selectedIds.isEmpty ? AppColors.textSecondary : AppColors.danger,
+                  side: BorderSide(color: _selectedIds.isEmpty ? AppColors.border : AppColors.danger, width: 1.4),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
+
+        // 검색 결과가 있을 때만 전체 선택 체크박스 노출
         if (_filteredHistoryLogs.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4.0),
@@ -900,10 +1141,10 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
               children: [
                 Checkbox(
                   value: isAllSelected,
-                  activeColor: const Color(0xFF6B7BFF),
                   onChanged: (bool? value) {
                     setState(() {
                       if (value == true) {
+                        // 현재 검색 결과에 보이는 모든 ID 일괄 추가
                         _selectedIds.addAll(_filteredHistoryLogs.map((e) => e['id'] as int));
                       } else {
                         _selectedIds.clear();
@@ -913,21 +1154,23 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                 ),
                 Text(
                   isAllSelected ? '전체 선택 해제' : '검색 결과 전체 선택',
-                  style: TextStyle(color: Colors.grey.shade700, fontWeight: FontWeight.bold, fontSize: 13),
+                  style: const TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold, fontSize: 13),
                 ),
               ],
             ),
           ),
         const SizedBox(height: 5),
+
+        // 하단: 기록 리스트 노출 영역 (당겨서 새로고침 기능 포함)
         Expanded(
           child: _filteredHistoryLogs.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.history_toggle_off_rounded, size: 40, color: Colors.grey.shade300),
+                      Icon(Icons.history_toggle_off_rounded, size: 40, color: AppColors.border),
                       const SizedBox(height: 8),
-                      Text('데이터베이스에 저장된 입출고 내역이 없습니다.', style: TextStyle(color: Colors.grey.shade400)),
+                      const Text('데이터베이스에 저장된 입출고 내역이 없습니다.', style: TextStyle(color: AppColors.textSecondary)),
                     ],
                   ),
                 )
@@ -940,27 +1183,36 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                       final int logId = log['id'] ?? 0;
                       final String type = log['type'] ?? '출고';
                       final String time = log['time'] ?? '';
-                      final String content = log['content'] ?? '';
+                      final String barcode = log['barcode'] ?? '';
+                      final String name = log['name'] ?? '';
+                      final String school = log['school'] ?? '';
                       final bool isCheckout = type == '출고';
+                      final String content = isCheckout
+                          ? '$name ($barcode) ➡️ [$school]'
+                          : '$name ($barcode) [반납 완료${school.isNotEmpty ? ' · $school' : ''}]';
                       final bool isSelected = _selectedIds.contains(logId);
+                      final StatusPalette palette = isCheckout ? StatusPalette.rented : StatusPalette.checkin;
 
                       return Container(
                         key: ValueKey(logId),
-                        margin: const EdgeInsets.only(bottom: 12),
+                        margin: const EdgeInsets.only(bottom: 10),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(10),
                           border: Border.all(
-                            color: isSelected ? const Color(0xFF6B7BFF) : Colors.grey.shade200,
+                            color: isSelected ? AppColors.primary : AppColors.border,
                             width: isSelected ? 1.5 : 1,
                           ),
                         ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+                        clipBehavior: Clip.antiAlias,
+                        child: IntrinsicHeight(
+                          child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
+                            // 출고/입고를 구분하는 왼쪽 컬러 악센트 바
+                            Container(width: 4, color: palette.fg),
                             Checkbox(
                               value: isSelected,
-                              activeColor: const Color(0xFF6B7BFF),
                               onChanged: (bool? value) {
                                 setState(() {
                                   if (value == true) {
@@ -971,30 +1223,60 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                                 });
                               },
                             ),
+
+                            // 🛠️ 날짜 및 시간 출력부 (공백 분리형 구조)
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 14.0),
                               child: Row(
                                 children: [
-                                  Column(
-                                    children: [
-                                      Text(time, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey.shade700, fontSize: 13)),
-                                      const Text('기록', style: TextStyle(color: Colors.grey, fontSize: 10)),
-                                    ],
+                                  const SizedBox(width: 5),
+                                  SizedBox(
+                                    width: 85, // 가로 폭을 고정하여 날짜가 길어져도 UI가 밀리지 않도록 고정
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                      children: [
+                                        // 'YYYY-MM-DD HH:mm' 형태일 경우 앞의 날짜만 추출, 구형 포맷('15:30')이면 문자열 전체 출력
+                                        Text(
+                                          time.contains(' ') ? time.split(' ')[0] : time,
+                                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary, fontSize: 11),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        // 공백 뒤에 시간('HH:mm') 세부 정보가 존재할 때만 아래 줄에 추가 렌더링
+                                        if (time.contains(' ')) ...[
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            time.split(' ')[1],
+                                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.w600),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ]
+                                      ],
+                                    ),
                                   ),
-                                  const SizedBox(width: 12),
-                                  Container(width: 1, height: 30, color: Colors.grey.shade300),
-                                  const SizedBox(width: 12),
+                                  const SizedBox(width: 5),
+                                  Container(width: 1, height: 32, color: AppColors.border),
+                                  const SizedBox(width: 10),
+
+                                  // 출고/입고 상태 태그 블록
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                     decoration: BoxDecoration(
-                                      color: isCheckout ? Colors.orange.withOpacity(0.12) : Colors.blue.withOpacity(0.12),
+                                      color: palette.bg,
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Row(
                                       children: [
-                                        Icon(isCheckout ? Icons.upload_sharp : Icons.download_sharp, size: 14, color: isCheckout ? Colors.orange.shade700 : Colors.blue.shade700),
+                                        Icon(
+                                          isCheckout ? Icons.upload_rounded : Icons.download_rounded,
+                                          size: 14,
+                                          color: palette.fg,
+                                        ),
                                         const SizedBox(width: 4),
-                                        Text(type, style: TextStyle(color: isCheckout ? Colors.orange.shade700 : Colors.blue.shade700, fontWeight: FontWeight.bold, fontSize: 12)),
+                                        Text(
+                                          type,
+                                          style: TextStyle(color: palette.fg, fontWeight: FontWeight.bold, fontSize: 12),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -1002,10 +1284,24 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                               ),
                             ),
                             const SizedBox(width: 14),
+
+                            // 우측: 입출고 상세 텍스트 내용 (행 높이 안에서 세로 중앙 정렬)
                             Expanded(
-                              child: Text(content, style: const TextStyle(fontSize: 14, color: Colors.black87, fontWeight: FontWeight.w500)),
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 16.0),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    content,
+                                    style: const TextStyle(fontSize: 14, color: AppColors.textPrimary, fontWeight: FontWeight.w500),
+                                    overflow: TextOverflow.ellipsis, // 텍스트가 기기 화면 바깥으로 넘치면 자동으로 ... 처리
+                                    maxLines: 2,
+                                  ),
+                                ),
+                              ),
                             ),
                           ],
+                          ),
                         ),
                       );
                     },
@@ -1020,29 +1316,23 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     return ListView(
       children: [
         Card(
-          elevation: 2,
-          margin: const EdgeInsets.only(bottom: 20),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.only(bottom: 16),
           child: Padding(
             padding: const EdgeInsets.all(20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('📊 대량 데이터 등록', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const _SectionHeader(icon: Icons.inventory_2_rounded, color: AppColors.success, title: '대량 데이터 등록'),
                 const SizedBox(height: 10),
-                const Text('악기 목록이 담긴 엑셀(.xlsx) 파일을 업로드하여 일괄 등록합니다.', style: TextStyle(color: Colors.grey)),
-                const SizedBox(height: 20),
+                const Text('악기 목록이 담긴 엑셀(.xlsx) 파일을 업로드하여 일괄 등록합니다.', style: TextStyle(color: AppColors.textSecondary)),
+                const SizedBox(height: 18),
                 SizedBox(
                   width: double.infinity,
-                  height: 50,
                   child: OutlinedButton.icon(
                     onPressed: _uploadExcelToServer,
-                    icon: const Icon(Icons.upload, color: Colors.green),
-                    label: const Text('엑셀 파일 업로드하기', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.green), 
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
+                    icon: const Icon(Icons.upload_rounded, size: 20),
+                    label: const Text('엑셀 파일 업로드하기'),
+                    style: OutlinedButton.styleFrom(foregroundColor: AppColors.success, side: const BorderSide(color: AppColors.success, width: 1.4)),
                   ),
                 ),
               ],
@@ -1050,36 +1340,55 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
           ),
         ),
         Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.only(bottom: 16),
           child: Padding(
             padding: const EdgeInsets.all(20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('✍️ 개별 악기 수동 추가', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 15),
-                TextField(
-                  controller: _barcodeController,
-                  decoration: const InputDecoration(labelText: '바코드 번호 입력', border: OutlineInputBorder()),
+                const _SectionHeader(icon: Icons.receipt_long_rounded, color: AppColors.info, title: '입출고 기록 대량 등록'),
+                const SizedBox(height: 10),
+                const Text(
+                  "입출고 기록이 담긴 엑셀(.xlsx) 파일을 업로드하여 일괄 등록합니다.\n첫 줄(헤더)은 '시간', '구분', '바코드', '물품명', '대여처' 순서여야 합니다.",
+                  style: TextStyle(color: AppColors.textSecondary),
                 ),
-                const SizedBox(height: 15),
-                TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(labelText: '악기 이름 입력', border: OutlineInputBorder()),
-                ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
                 SizedBox(
                   width: double.infinity,
-                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: _uploadHistoryExcelToServer,
+                    icon: const Icon(Icons.upload_file_rounded, size: 20),
+                    label: const Text('기록 엑셀 파일 업로드하기'),
+                    style: OutlinedButton.styleFrom(foregroundColor: AppColors.info, side: const BorderSide(color: AppColors.info, width: 1.4)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _SectionHeader(icon: Icons.edit_note_rounded, color: AppColors.primary, title: '개별 악기 수동 추가'),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _barcodeController,
+                  decoration: const InputDecoration(labelText: '바코드 번호 입력', prefixIcon: Icon(Icons.qr_code_rounded)),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(labelText: '악기 이름 입력', prefixIcon: Icon(Icons.music_note_rounded)),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
                   child: ElevatedButton(
                     onPressed: _addSingleInstrument,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6B7BFF), 
-                      foregroundColor: Colors.white, 
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text('악기 등록하기', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    child: const Text('악기 등록하기'),
                   ),
                 ),
               ],
@@ -1093,6 +1402,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
   @override
   Widget build(BuildContext context) {
     final List<Widget> tabs = [
+      _buildHomeTab(),
       _buildCheckInOutTab(),
       _buildInventoryTab(),
       _buildHistoryTab(),
@@ -1100,48 +1410,223 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     ];
 
     final List<String> titles = [
-      '🔄 악기 입출고 관리 시스템',
-      '📋 보유 악기 현황',
-      '🕒 실시간 입출고 기록',
-      '⚙️ 데이터 관리 시스템'
+      '해봄악기도서관',
+      '악기 입출고 관리',
+      '보유 악기 현황',
+      '실시간 입출고 기록',
+      '데이터 관리',
+    ];
+
+    final List<IconData> titleIcons = [
+      Icons.home_rounded,
+      Icons.swap_horiz_rounded,
+      Icons.inventory_2_rounded,
+      Icons.history_rounded,
+      Icons.settings_rounded,
     ];
 
     return Scaffold(
+      extendBody: true,
       appBar: AppBar(
-        title: Text(titles[_currentIndex], style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-        backgroundColor: const Color(0xFF6B7BFF),
-        centerTitle: true,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(titleIcons[_currentIndex], size: 19, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Text(titles[_currentIndex]),
+          ],
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: AppColors.border),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
+            icon: const Icon(Icons.refresh_rounded, color: AppColors.textSecondary),
+            tooltip: '새로고침',
             onPressed: () async {
               await _fetchInstruments();
               await _fetchHistoryLogs();
             },
-          )
+          ),
+          const SizedBox(width: 6),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: tabs[_currentIndex],
+      body: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: tabs[_currentIndex],
+        ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: const Color(0xFF6B7BFF),
-        unselectedItemColor: Colors.grey,
-        showUnselectedLabels: true,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.swap_horiz), label: '입출고관리'),
-          BottomNavigationBarItem(icon: Icon(Icons.inventory), label: '악기현황'),
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: '기록확인'),
-          BottomNavigationBarItem(icon: Icon(Icons.analytics), label: '데이터관리'),
+      bottomNavigationBar: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: AppColors.border)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: (index) => setState(() => _currentIndex = index),
+            destinations: const [
+              NavigationDestination(icon: Icon(Icons.home_rounded), label: '홈'),
+              NavigationDestination(icon: Icon(Icons.swap_horiz_rounded), label: '입출고'),
+              NavigationDestination(icon: Icon(Icons.inventory_2_rounded), label: '악기현황'),
+              NavigationDestination(icon: Icon(Icons.history_rounded), label: '기록'),
+              NavigationDestination(icon: Icon(Icons.settings_rounded), label: '관리'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 작은 원형 배경의 아이콘 버튼. 목록 카드의 수정/삭제 액션에 사용.
+class _RoundIconButton extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  const _RoundIconButton({
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onPressed,
+        child: Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+          child: Icon(icon, color: color, size: 18),
+        ),
+      ),
+    );
+  }
+}
+
+/// 데이터 관리 탭 각 카드 상단의 아이콘 배지 + 제목 헤더.
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+
+  const _SectionHeader({required this.icon, required this.color, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, color: color, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+      ],
+    );
+  }
+}
+
+/// 홈 화면 상단의 요약 통계 타일 (전체/보관중/대여중 개수).
+class _HomeStatTile extends StatelessWidget {
+  final String label;
+  final int value;
+  final StatusPalette palette;
+
+  const _HomeStatTile({required this.label, required this.value, required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(10)),
+      child: Column(
+        children: [
+          Text('$value', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: palette.fg)),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
         ],
+      ),
+    );
+  }
+}
+
+/// 홈 화면(시작메뉴)에서 각 기능으로 이동하는 카드 버튼.
+class _HomeMenuCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final StatusPalette palette;
+  final VoidCallback onTap;
+
+  const _HomeMenuCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.palette,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        splashColor: palette.fg.withValues(alpha: 0.08),
+        highlightColor: palette.fg.withValues(alpha: 0.04),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(12)),
+                child: Icon(icon, color: palette.fg, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: AppColors.textPrimary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary, size: 22),
+            ],
+          ),
+        ),
       ),
     );
   }
