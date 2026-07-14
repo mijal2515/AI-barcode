@@ -8,7 +8,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' as io;
 import 'package:path_provider/path_provider.dart';
 import 'package:universal_html/html.dart' as html;
-import 'app_widgets.dart';
+import 'app_theme.dart';
 import 'barcode_scanner_page.dart';
 
 const String SERVER_URL = 'https://port-0-ai-barcode-mripc4hw74b4a446.sel3.cloudtype.app';
@@ -191,6 +191,22 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
             "region": regionForHistory,
             "rental_due": actionType == '출고' ? rentalDueText : '',
             "status": newStatus,
+          }),
+        );
+
+        // 🛠️ 악기 상태를 history뿐 아니라 instruments 테이블에도 반영해야
+        // 앱을 재시작해도 대여중/보관중 상태가 유지됩니다.
+        var instrumentUrl = Uri.parse('$SERVER_URL/instruments/${Uri.encodeComponent(scannedItem['barcode'].toString())}');
+        await http.put(
+          instrumentUrl,
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            'name': scannedItem['name'].toString(),
+            'category': (scannedItem['category'] ?? '').toString(),
+            'instrument_number': (scannedItem['instrument_number'] ?? '').toString(),
+            'status': newStatus,
+            'school': actionType == '출고' ? schoolText : '',
+            'region': actionType == '출고' ? regionText : '',
           }),
         );
 
@@ -663,24 +679,30 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
       child: Column(
         children: [
           Container(
-            decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
+            ),
             child: TabBar(
+              dividerColor: Colors.transparent,
               labelColor: Colors.white,
-              unselectedLabelColor: Colors.grey.shade600,
+              unselectedLabelColor: AppColors.textSecondary,
               indicatorSize: TabBarIndicatorSize.tab,
-              indicator: BoxDecoration(borderRadius: BorderRadius.circular(12), color: const Color(0xFF6B7BFF)),
+              indicator: BoxDecoration(borderRadius: BorderRadius.circular(9), color: StatusPalette.rented.fg),
               tabs: const [
-                Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.upload_sharp, size: 18), SizedBox(width: 6), Text('악기 출고 (대여)', style: TextStyle(fontWeight: FontWeight.bold))])),
-                Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.download_sharp, size: 18), SizedBox(width: 6), Text('악기 입고 (반납)', style: TextStyle(fontWeight: FontWeight.bold))])),
+                Tab(height: 42, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.upload_sharp, size: 17), SizedBox(width: 6), Text('출고 (대여)', style: TextStyle(fontWeight: FontWeight.w700))])),
+                Tab(height: 42, child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.download_sharp, size: 17), SizedBox(width: 6), Text('입고 (반납)', style: TextStyle(fontWeight: FontWeight.w700))])),
               ],
             ),
           ),
-          const SizedBox(height: 15),
+          const SizedBox(height: 14),
           Expanded(
             child: TabBarView(
               children: [
-                _buildSubActionPage('출고', _checkoutBarcodeController, _checkoutCart, Colors.orange),
-                _buildSubActionPage('입고', _checkinBarcodeController, _checkinCart, Colors.blue),
+                _buildSubActionPage('출고', _checkoutBarcodeController, _checkoutCart, StatusPalette.rented),
+                _buildSubActionPage('입고', _checkinBarcodeController, _checkinCart, StatusPalette.checkin),
               ],
             ),
           ),
@@ -689,221 +711,194 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     );
   }
 
-  Widget _buildSubActionPage(String type, TextEditingController controller, List<dynamic> cart, Color themeColor) {
-    return Padding(
-      padding: const EdgeInsets.all(4.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            controller: controller,
-            autofocus: true,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-            decoration: InputDecoration(
-              hintText: '바코드를 스캔하거나 입력 후 Enter ($type 모드)',
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.shade300, width: 1.5)),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: themeColor, width: 2)),
-              prefixIcon: Icon(Icons.qr_code_scanner, color: themeColor),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.camera_alt, color: Colors.blueAccent),
-                tooltip: '휴대폰 카메라로 스캔',
-                onPressed: () async {
-                  var res = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const BarcodeScannerPage(),
-                    ),
-                  );
-                  if (res is String && res != '-1') {
-                    _addToCart(res, type); // 카메라로 스캔한 결과물 자동 장바구니 추가
-                  }
-                },
-              ),
-            ),
-            onSubmitted: (value) => _addToCart(value, type),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.list_alt_rounded, color: Colors.grey.shade700, size: 20),
-                  const SizedBox(width: 6),
-                  Text('$type 대기 목록', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(color: themeColor.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-                    child: Text('${cart.length}개', style: TextStyle(color: themeColor, fontWeight: FontWeight.bold, fontSize: 13)),
+  Widget _qtyStepButton(IconData icon, VoidCallback onTap) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(20),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(icon, size: 18, color: AppColors.textSecondary),
+      ),
+    );
+  }
+
+  Widget _buildSubActionPage(String type, TextEditingController controller, List<dynamic> cart, StatusPalette palette) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600),
+          decoration: InputDecoration(
+            hintText: '바코드를 스캔하거나 입력 후 Enter',
+            prefixIcon: Icon(Icons.qr_code_scanner, color: palette.fg),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: palette.fg, width: 1.5)),
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.camera_alt_outlined, color: AppColors.textSecondary),
+              tooltip: '휴대폰 카메라로 스캔',
+              onPressed: () async {
+                var res = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const BarcodeScannerPage(),
                   ),
-                ],
-              ),
-              if (cart.isNotEmpty)
-                TextButton.icon(
-                  onPressed: () => setState(() => type == '출고' ? _checkoutCart.clear() : _checkinCart.clear()),
-                  icon: const Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
-                  label: const Text('전체 비우기', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-                )
-            ],
+                );
+                if (res is String && res != '-1') {
+                  _addToCart(res, type); // 카메라로 스캔한 결과물 자동 장바구니 추가
+                }
+              },
+            ),
           ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: cart.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.center_focus_weak_rounded, size: 40, color: Colors.grey.shade300),
-                        const SizedBox(height: 8),
-                        Text('스캔된 악기가 없습니다. 바코드를 찍어주세요.', style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
+          onSubmitted: (value) => _addToCart(value, type),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Text('대기 목록', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(20)),
+                  child: Text('${cart.length}', style: TextStyle(color: palette.fg, fontWeight: FontWeight.w800, fontSize: 12)),
+                ),
+              ],
+            ),
+            if (cart.isNotEmpty)
+              TextButton.icon(
+                onPressed: () => setState(() => cart.clear()),
+                icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.danger),
+                label: const Text('전체 비우기', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.w700)),
+              )
+          ],
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: cart.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.center_focus_weak_rounded, size: 36, color: AppColors.border),
+                      const SizedBox(height: 8),
+                      const Text('스캔된 악기가 없습니다.', style: TextStyle(color: AppColors.textSecondary, fontSize: 13.5)),
+                    ],
+                  ),
+                )
+              : Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
                     itemCount: cart.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final item = cart[index];
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: themeColor.withOpacity(0.2), width: 1),
-                          boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.04), blurRadius: 4, offset: const Offset(0, 2))],
-                        ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                          title: Text(item['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                          subtitle: Text('바코드: ${item['barcode']}', style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text('신청수량', style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
-                              const SizedBox(width: 4),
-                              IconButton(
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                icon: const Icon(Icons.remove_circle_outline, size: 20),
-                                onPressed: () => setState(() {
-                                  final qty = (item['quantity'] ?? 1) as int;
-                                  if (qty > 1) item['quantity'] = qty - 1;
-                                }),
-                              ),
-                              SizedBox(
-                                width: 20,
-                                child: Text('${item['quantity'] ?? 1}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
-                              ),
-                              IconButton(
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                icon: const Icon(Icons.add_circle_outline, size: 20),
-                                onPressed: () => setState(() {
-                                  final qty = (item['quantity'] ?? 1) as int;
-                                  item['quantity'] = qty + 1;
-                                }),
-                              ),
-                              const SizedBox(width: 4),
-                              IconButton(
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                icon: const Icon(Icons.cancel_rounded, color: Colors.grey),
-                                onPressed: () => setState(() => cart.removeAt(index)),
-                              ),
-                            ],
-                          ),
+                      final int quantity = (item['quantity'] ?? 1) as int;
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                        title: Text(item['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14.5)),
+                        subtitle: Text(item['barcode']?.toString() ?? '', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12.5)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _qtyStepButton(Icons.remove, () => setState(() {
+                                  if (quantity > 1) item['quantity'] = quantity - 1;
+                                })),
+                            SizedBox(width: 22, child: Text('$quantity', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w800))),
+                            _qtyStepButton(Icons.add, () => setState(() => item['quantity'] = quantity + 1)),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary, size: 20),
+                              onPressed: () => setState(() => cart.removeAt(index)),
+                            ),
+                          ],
                         ),
                       );
                     },
                   ),
-          ),
-          const SizedBox(height: 15),
-          if (type == '출고') ...[
-            TextField(
-              controller: _schoolController,
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade800),
-              decoration: InputDecoration(
-                labelText: '🏫 출고 대상 기관명 입력',
-                labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                hintText: '예시: 서울초등학교',
-                filled: true,
-                fillColor: Colors.orange.withOpacity(0.03),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orangeAccent, width: 1.5)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
-                prefixIcon: const Icon(Icons.school, color: Colors.orange),
-              ),
+                ),
+        ),
+        if (type == '출고') ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.border),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _regionController,
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade800),
-              decoration: InputDecoration(
-                labelText: '📍 지역 입력',
-                labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                hintText: '예시: 서울특별시',
-                filled: true,
-                fillColor: Colors.orange.withOpacity(0.03),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orangeAccent, width: 1.5)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
-                prefixIcon: const Icon(Icons.location_on, color: Colors.orange),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _rentalDueController,
-              readOnly: true,
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade800),
-              decoration: InputDecoration(
-                labelText: '📅 반납예정일 선택',
-                labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-                hintText: '날짜를 선택하세요',
-                filled: true,
-                fillColor: Colors.orange.withOpacity(0.03),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orangeAccent, width: 1.5)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
-                prefixIcon: const Icon(Icons.event, color: Colors.orange),
-              ),
-              onTap: () async {
-                final picked = await showDatePicker(
-                  context: context,
-                  initialDate: DateTime.now(),
-                  firstDate: DateTime.now().subtract(const Duration(days: 1)),
-                  lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
-                );
-                if (picked != null) {
-                  _rentalDueController.text =
-                      "${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
-                }
-              },
-            ),
-            const SizedBox(height: 15),
-          ],
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: ElevatedButton(
-              onPressed: () => _completeBatchAction(type),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: themeColor,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                elevation: 1,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(type == '출고' ? Icons.local_shipping_rounded : Icons.assignment_returned_rounded),
-                  const SizedBox(width: 8),
-                  Text('$type 처리 완료하기', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                ],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('출고 정보', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5, color: AppColors.textSecondary)),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _schoolController,
+                        decoration: const InputDecoration(labelText: '기관명', hintText: '예: 서울초등학교', prefixIcon: Icon(Icons.school_outlined, size: 20)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: _regionController,
+                        decoration: const InputDecoration(labelText: '지역', hintText: '예: 서울', prefixIcon: Icon(Icons.location_on_outlined, size: 20)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _rentalDueController,
+                  readOnly: true,
+                  decoration: const InputDecoration(labelText: '반납예정일', hintText: '날짜 선택', prefixIcon: Icon(Icons.event_outlined, size: 20)),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: DateTime.now(),
+                      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                      lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+                    );
+                    if (picked != null) {
+                      _rentalDueController.text =
+                          "${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
+                    }
+                  },
+                ),
+              ],
             ),
           ),
         ],
-      ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: ElevatedButton(
+            onPressed: () => _completeBatchAction(type),
+            style: ElevatedButton.styleFrom(backgroundColor: palette.fg),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(type == '출고' ? Icons.local_shipping_rounded : Icons.assignment_returned_rounded, size: 20),
+                const SizedBox(width: 8),
+                Text('$type 처리 완료', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
