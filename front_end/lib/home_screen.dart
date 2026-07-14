@@ -8,9 +8,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' as io;
 import 'package:path_provider/path_provider.dart';
 import 'package:universal_html/html.dart' as html;
-import 'package:simple_barcode_scanner/simple_barcode_scanner.dart';
-
 import 'app_widgets.dart';
+import 'barcode_scanner_page.dart';
 
 const String SERVER_URL = 'https://port-0-ai-barcode-mripc4hw74b4a446.sel3.cloudtype.app';
 
@@ -27,12 +26,18 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _barcodeController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
-  
+  final TextEditingController _categoryController = TextEditingController();
+  final TextEditingController _instrumentNumberController = TextEditingController();
+
   final TextEditingController _checkoutBarcodeController = TextEditingController();
   final TextEditingController _checkinBarcodeController = TextEditingController();
-  
+
   final TextEditingController _schoolController = TextEditingController();
+  final TextEditingController _regionController = TextEditingController();
+  final TextEditingController _rentalDueController = TextEditingController();
   final TextEditingController _historySearchController = TextEditingController();
+
+  static const List<String> _statusOptions = ['보관중', '대여중', '수리중'];
 
   List<dynamic> _checkoutCart = [];
   List<dynamic> _checkinCart = [];
@@ -103,6 +108,12 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
       return;
     }
 
+    if (actionType == '출고' && instrument['status'] == '수리중') {
+      _showSnackBar('🔧 수리 중인 악기는 출고할 수 없습니다.');
+      _clearBarcodeTextField(actionType);
+      return;
+    }
+
     if (actionType == '입고' && instrument['status'] == '보관중') {
       _showSnackBar('⚠️ 이미 보관 중인 악기입니다. 입고 대기 목록에 넣을 수 없습니다.');
       _clearBarcodeTextField(actionType);
@@ -118,7 +129,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
 
     setState(() {
-      targetCart.add(instrument);
+      targetCart.add(Map<String, dynamic>.from(instrument)..['quantity'] = 1);
     });
 
     _clearBarcodeTextField(actionType);
@@ -141,21 +152,28 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
 
     String schoolText = _schoolController.text.trim();
+    String regionText = _regionController.text.trim();
+    String rentalDueText = _rentalDueController.text.trim();
     if (actionType == '출고' && schoolText.isEmpty) {
-      _showSnackBar('🏫 출고할 학교 이름을 입력해 주세요!');
+      _showSnackBar('🏫 출고할 학교(기관) 이름을 입력해 주세요!');
       return;
     }
 
-    String timeNow = "${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}";
+    final now = DateTime.now();
+    String timeNow = "${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} "
+        "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
     String newStatus = actionType == '출고' ? '대여중' : '보관중';
     int count = targetCart.length;
 
     try {
       for (var scannedItem in targetCart) {
-        // 🎯 출고는 지금 입력한 학교로, 입고는 반납되기 직전까지 대여 중이던 학교로 기록
+        // 🎯 출고는 지금 입력한 학교/지역으로, 입고는 반납되기 직전까지 대여 중이던 학교/지역으로 기록
         String schoolForHistory = actionType == '출고'
             ? schoolText
             : (scannedItem['school'] ?? '').toString();
+        String regionForHistory = actionType == '출고'
+            ? regionText
+            : (scannedItem['region'] ?? '').toString();
 
         var url = Uri.parse('$SERVER_URL/history');
         await http.post(
@@ -166,7 +184,13 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
             "type": actionType,
             "barcode": scannedItem['barcode'].toString(),
             "name": scannedItem['name'].toString(),
+            "category": (scannedItem['category'] ?? '').toString(),
+            "instrument_number": (scannedItem['instrument_number'] ?? '').toString(),
+            "quantity": scannedItem['quantity'] ?? 1,
             "school": schoolForHistory,
+            "region": regionForHistory,
+            "rental_due": actionType == '출고' ? rentalDueText : '',
+            "status": newStatus,
           }),
         );
 
@@ -174,6 +198,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         if (index != -1) {
           _allInstruments[index]['status'] = newStatus;
           _allInstruments[index]['school'] = actionType == '출고' ? schoolText : '';
+          _allInstruments[index]['region'] = actionType == '출고' ? regionText : '';
         }
       }
 
@@ -183,6 +208,8 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         if (actionType == '출고') {
           _checkoutCart = [];
           _schoolController.clear();
+          _regionController.clear();
+          _rentalDueController.clear();
         } else {
           _checkinCart = [];
         }
@@ -230,6 +257,8 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
   Future<void> _addSingleInstrument() async {
     String barcode = _barcodeController.text.trim();
     String name = _nameController.text.trim();
+    String category = _categoryController.text.trim();
+    String instrumentNumber = _instrumentNumberController.text.trim();
 
     if (barcode.isEmpty || name.isEmpty) {
       _showSnackBar('⚠️ 바코드와 악기 이름을 모두 입력해주세요.');
@@ -244,8 +273,11 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         body: jsonEncode({
           'barcode': barcode,
           'name': name,
+          'category': category,
+          'instrument_number': instrumentNumber,
           'status': '보관중',
           'school': '',
+          'region': '',
         }),
       );
 
@@ -256,6 +288,8 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
           await _fetchInstruments();
           _barcodeController.clear();
           _nameController.clear();
+          _categoryController.clear();
+          _instrumentNumberController.clear();
         } else {
           _showSnackBar('❌ DB 등록 실패: ${decodedData['message']}');
         }
@@ -270,90 +304,123 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
 
   void _showEditDialog(Map<String, dynamic> instrument) {
     final nameController = TextEditingController(text: instrument['name']);
-    final statusController = TextEditingController(text: instrument['status']);
+    final categoryController = TextEditingController(text: instrument['category']);
+    final instrumentNumberController = TextEditingController(text: instrument['instrument_number']);
     final schoolController = TextEditingController(text: instrument['school']);
+    final regionController = TextEditingController(text: instrument['region']);
+    String selectedStatus = _statusOptions.contains(instrument['status']) ? instrument['status'] : _statusOptions[0];
 
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: Text('✏️ [${instrument['name']}] 정보 수정', style: const TextStyle(fontWeight: FontWeight.bold)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: TextEditingController(text: instrument['barcode']),
-                  decoration: const InputDecoration(labelText: '바코드 (수정 불가)'),
-                  readOnly: true,
-                  style: const TextStyle(color: Colors.grey),
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text('✏️ [${instrument['name']}] 정보 수정', style: const TextStyle(fontWeight: FontWeight.bold)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: TextEditingController(text: instrument['barcode']),
+                      decoration: const InputDecoration(labelText: '바코드 (수정 불가)'),
+                      readOnly: true,
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(labelText: '악기 이름'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: categoryController,
+                      decoration: const InputDecoration(labelText: '악기분류'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: instrumentNumberController,
+                      decoration: const InputDecoration(labelText: '악기 고유번호'),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedStatus,
+                      decoration: const InputDecoration(labelText: '상태'),
+                      items: _statusOptions
+                          .map((status) => DropdownMenuItem(value: status, child: Text(status)))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) setDialogState(() => selectedStatus = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: schoolController,
+                      decoration: const InputDecoration(labelText: '기관명 (대여처)'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: regionController,
+                      decoration: const InputDecoration(labelText: '지역'),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: '악기 이름'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('취소', style: TextStyle(color: Colors.grey)),
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: statusController,
-                  decoration: const InputDecoration(labelText: '상태 (보관중 / 대여중)'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: schoolController,
-                  decoration: const InputDecoration(labelText: '대여처 (학교명)'),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6B7BFF)),
+                  onPressed: () async {
+                    String newName = nameController.text.trim();
+                    String newCategory = categoryController.text.trim();
+                    String newInstrumentNumber = instrumentNumberController.text.trim();
+                    String newSchool = schoolController.text.trim();
+                    String newRegion = regionController.text.trim();
+
+                    if (newName.isEmpty) {
+                      _showSnackBar('⚠️ 악기 이름을 입력해주세요.');
+                      return;
+                    }
+
+                    try {
+                      var url = Uri.parse('$SERVER_URL/instruments/${instrument['barcode']}');
+                      var response = await http.put(
+                        url,
+                        headers: {"Content-Type": "application/json"},
+                        body: jsonEncode({
+                          'name': newName,
+                          'category': newCategory,
+                          'instrument_number': newInstrumentNumber,
+                          'status': selectedStatus,
+                          'school': newSchool,
+                          'region': newRegion,
+                        }),
+                      );
+
+                      if (response.statusCode == 200) {
+                        var decodedData = jsonDecode(utf8.decode(response.bodyBytes));
+                        if (decodedData['status'] == 'success') {
+                          Navigator.pop(context);
+                          _showSnackBar('🎉 악기 정보가 수정되었습니다.');
+                          await _fetchInstruments();
+                        } else {
+                          _showSnackBar('❌ 수정 실패: ${decodedData['message']}');
+                        }
+                      } else {
+                        _showSnackBar('❌ 서버 에러 (${response.statusCode})');
+                      }
+                    } catch (e) {
+                      _showSnackBar('❌ 네트워크 오류: 서버 연결을 확인하세요.');
+                    }
+                  },
+                  child: const Text('저장', style: TextStyle(color: Colors.white)),
                 ),
               ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('취소', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6B7BFF)),
-              onPressed: () async {
-                String newName = nameController.text.trim();
-                String newStatus = statusController.text.trim();
-                String newSchool = schoolController.text.trim();
-
-                if (newName.isEmpty) {
-                  _showSnackBar('⚠️ 악기 이름을 입력해주세요.');
-                  return;
-                }
-
-                try {
-                  var url = Uri.parse('$SERVER_URL/instruments/${instrument['barcode']}');
-                  var response = await http.put(
-                    url,
-                    headers: {"Content-Type": "application/json"},
-                    body: jsonEncode({
-                      'name': newName,
-                      'status': newStatus,
-                      'school': newSchool,
-                    }),
-                  );
-
-                  if (response.statusCode == 200) {
-                    var decodedData = jsonDecode(utf8.decode(response.bodyBytes));
-                    if (decodedData['status'] == 'success') {
-                      Navigator.pop(context);
-                      _showSnackBar('🎉 악기 정보가 수정되었습니다.');
-                      await _fetchInstruments();
-                    } else {
-                      _showSnackBar('❌ 수정 실패: ${decodedData['message']}');
-                    }
-                  } else {
-                    _showSnackBar('❌ 서버 에러 (${response.statusCode})');
-                  }
-                } catch (e) {
-                  _showSnackBar('❌ 네트워크 오류: 서버 연결을 확인하세요.');
-                }
-              },
-              child: const Text('저장', style: TextStyle(color: Colors.white)),
-            ),
-          ],
+            );
+          },
         );
       },
     );
@@ -422,7 +489,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
 
   Future<void> _uploadExcelToServer() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
+      FilePickerResult? result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx', 'xls'],
         withData: true,
@@ -477,7 +544,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
       );
 
       // 3. 타이틀 헤더 추가
-      List<String> headers = ["시간", "구분", "바코드", "물품명", "대여처"];
+      List<String> headers = ["시간", "구분", "악기분류", "바코드", "악기 고유번호", "물품명", "신청수량", "기관명", "지역", "대여기간", "상태"];
       for (int i = 0; i < headers.length; i++) {
         var cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
         
@@ -499,16 +566,29 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         
         String timeValue = log['time'] ?? '';
         String typeValue = log['type'] ?? '';
+        String categoryValue = log['category'] ?? '';
         String barcodeValue = log['barcode'] ?? '';
+        String instrumentNumberValue = log['instrument_number'] ?? '';
         String nameValue = log['name'] ?? '';
+        String quantityValue = (log['quantity'] ?? 1).toString();
         String schoolValue = log['school'] ?? '';
+        String regionValue = log['region'] ?? '';
+        String rentalDueValue = log['rental_due'] ?? '';
+        String rentalPeriodValue = rentalDueValue.isEmpty ? '' : '${timeValue.split(' ')[0]} ~ $rentalDueValue';
+        String statusValue = log['status'] ?? '';
 
         // [수정] 일반 문자열을 TextCellValue로 감싸서 대입
         sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: i + 1)).value = TextCellValue(timeValue);
         sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: i + 1)).value = TextCellValue(typeValue);
-        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: i + 1)).value = TextCellValue(barcodeValue);
-        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: i + 1)).value = TextCellValue(nameValue);
-        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: i + 1)).value = TextCellValue(schoolValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: i + 1)).value = TextCellValue(categoryValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: i + 1)).value = TextCellValue(barcodeValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: i + 1)).value = TextCellValue(instrumentNumberValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: i + 1)).value = TextCellValue(nameValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: i + 1)).value = TextCellValue(quantityValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: i + 1)).value = TextCellValue(schoolValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: i + 1)).value = TextCellValue(regionValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: i + 1)).value = TextCellValue(rentalPeriodValue);
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 10, rowIndex: i + 1)).value = TextCellValue(statusValue);
       }
 
       // ... 하단 저장 및 공유(kIsWeb) 로직은 그대로 유지하시면 됩니다 ...
@@ -601,7 +681,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                   var res = await Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const SimpleBarcodeScannerPage(),
+                      builder: (context) => const BarcodeScannerPage(),
                     ),
                   );
                   if (res is String && res != '-1') {
@@ -666,9 +746,41 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                           title: Text(item['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                           subtitle: Text('바코드: ${item['barcode']}', style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.cancel_rounded, color: Colors.grey),
-                            onPressed: () => setState(() => cart.removeAt(index)),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('신청수량', style: TextStyle(color: Colors.grey.shade500, fontSize: 11)),
+                              const SizedBox(width: 4),
+                              IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.remove_circle_outline, size: 20),
+                                onPressed: () => setState(() {
+                                  final qty = (item['quantity'] ?? 1) as int;
+                                  if (qty > 1) item['quantity'] = qty - 1;
+                                }),
+                              ),
+                              SizedBox(
+                                width: 20,
+                                child: Text('${item['quantity'] ?? 1}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              ),
+                              IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.add_circle_outline, size: 20),
+                                onPressed: () => setState(() {
+                                  final qty = (item['quantity'] ?? 1) as int;
+                                  item['quantity'] = qty + 1;
+                                }),
+                              ),
+                              const SizedBox(width: 4),
+                              IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                icon: const Icon(Icons.cancel_rounded, color: Colors.grey),
+                                onPressed: () => setState(() => cart.removeAt(index)),
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -681,7 +793,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
               controller: _schoolController,
               style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade800),
               decoration: InputDecoration(
-                labelText: '🏫 출고 대상 학교 입력',
+                labelText: '🏫 출고 대상 기관명 입력',
                 labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
                 hintText: '예시: 서울초등학교',
                 filled: true,
@@ -690,6 +802,49 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                 focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
                 prefixIcon: const Icon(Icons.school, color: Colors.orange),
               ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _regionController,
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade800),
+              decoration: InputDecoration(
+                labelText: '📍 지역 입력',
+                labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                hintText: '예시: 서울특별시',
+                filled: true,
+                fillColor: Colors.orange.withOpacity(0.03),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orangeAccent, width: 1.5)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
+                prefixIcon: const Icon(Icons.location_on, color: Colors.orange),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _rentalDueController,
+              readOnly: true,
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange.shade800),
+              decoration: InputDecoration(
+                labelText: '📅 반납예정일 선택',
+                labelStyle: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
+                hintText: '날짜를 선택하세요',
+                filled: true,
+                fillColor: Colors.orange.withOpacity(0.03),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orangeAccent, width: 1.5)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Colors.orange, width: 2)),
+                prefixIcon: const Icon(Icons.event, color: Colors.orange),
+              ),
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: DateTime.now(),
+                  firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                  lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+                );
+                if (picked != null) {
+                  _rentalDueController.text =
+                      "${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
+                }
+              },
             ),
             const SizedBox(height: 15),
           ],
@@ -744,7 +899,11 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                         final item = _filteredInstruments[index];
                         final String status = item['status'] ?? '보관중';
                         final String school = item['school'] ?? '';
+                        final String region = item['region'] ?? '';
+                        final String category = item['category'] ?? '';
                         final bool isRented = status == '대여중';
+                        final bool isRepair = status == '수리중';
+                        final Color statusColor = isRented ? Colors.orange : (isRepair ? Colors.purple : Colors.green);
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
@@ -757,8 +916,11 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                               children: [
                                 CircleAvatar(
                                   radius: 22,
-                                  backgroundColor: isRented ? Colors.orange.withOpacity(0.1) : Colors.green.withOpacity(0.1),
-                                  child: Icon(isRented ? Icons.output_sharp : Icons.gavel_sharp, color: isRented ? Colors.orange : Colors.green),
+                                  backgroundColor: statusColor.withOpacity(0.1),
+                                  child: Icon(
+                                    isRented ? Icons.output_sharp : (isRepair ? Icons.build_rounded : Icons.gavel_sharp),
+                                    color: statusColor,
+                                  ),
                                 ),
                                 const SizedBox(width: 16),
                                 Expanded(
@@ -766,6 +928,10 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(item['name'] ?? '이름 없음', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                      if (category.isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(category, style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                                      ],
                                       const SizedBox(height: 6),
                                       Text('바코드: ${item['barcode']}', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
                                     ],
@@ -779,7 +945,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                                       children: [
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                          decoration: BoxDecoration(color: isRented ? Colors.orange : Colors.green, borderRadius: BorderRadius.circular(20)),
+                                          decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(20)),
                                           child: Text(status, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                                         ),
                                         const SizedBox(width: 8),
@@ -825,7 +991,10 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                                     ),
                                     if (isRented && school.isNotEmpty) ...[
                                       const SizedBox(height: 8),
-                                      Text('🏫 $school', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 13)),
+                                      Text(
+                                        region.isNotEmpty ? '🏫 $school ($region)' : '🏫 $school',
+                                        style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold, fontSize: 13),
+                                      ),
                                     ],
                                   ],
                                 ),
@@ -968,10 +1137,27 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                       final String barcode = log['barcode'] ?? '';
                       final String name = log['name'] ?? '';
                       final String school = log['school'] ?? '';
+                      final String category = log['category'] ?? '';
+                      final String instrumentNumber = log['instrument_number'] ?? '';
+                      final String quantity = (log['quantity'] ?? 1).toString();
+                      final String region = log['region'] ?? '';
+                      final String rentalDue = log['rental_due'] ?? '';
+                      final String status = log['status'] ?? '';
                       final bool isCheckout = type == '출고';
                       final String content = isCheckout
                           ? '$name ($barcode) ➡️ [$school]'
                           : '$name ($barcode) [반납 완료${school.isNotEmpty ? ' · $school' : ''}]';
+                      final String rentalPeriod = rentalDue.isEmpty
+                          ? ''
+                          : '${time.contains(' ') ? time.split(' ')[0] : time} ~ $rentalDue';
+                      final List<String> detailParts = [
+                        if (category.isNotEmpty) category,
+                        if (instrumentNumber.isNotEmpty) '고유번호 $instrumentNumber',
+                        '수량 $quantity',
+                        if (region.isNotEmpty) region,
+                        if (rentalPeriod.isNotEmpty) '대여기간 $rentalPeriod',
+                        if (status.isNotEmpty) status,
+                      ];
                       final bool isSelected = _selectedIds.contains(logId);
 
                       return Container(
@@ -1078,12 +1264,27 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                             // 우측: 입출고 상세 텍스트 내용
                             Expanded(
                               child: Padding(
-                                padding: const EdgeInsets.only(right: 16.0),
-                                child: Text(
-                                  content, 
-                                  style: const TextStyle(fontSize: 14, color: Colors.black87, fontWeight: FontWeight.w500),
-                                  overflow: TextOverflow.ellipsis, // 텍스트가 기기 화면 바깥으로 넘치면 자동으로 ... 처리
-                                  maxLines: 2,
+                                padding: const EdgeInsets.only(right: 16.0, top: 10, bottom: 10),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      content,
+                                      style: const TextStyle(fontSize: 14, color: Colors.black87, fontWeight: FontWeight.w500),
+                                      overflow: TextOverflow.ellipsis, // 텍스트가 기기 화면 바깥으로 넘치면 자동으로 ... 처리
+                                      maxLines: 2,
+                                    ),
+                                    if (detailParts.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        detailParts.join(' · '),
+                                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 2,
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
                             ),
@@ -1149,6 +1350,16 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                 TextField(
                   controller: _nameController,
                   decoration: const InputDecoration(labelText: '악기 이름 입력', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: _categoryController,
+                  decoration: const InputDecoration(labelText: '악기분류 입력', border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: _instrumentNumberController,
+                  decoration: const InputDecoration(labelText: '악기 고유번호 입력', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
