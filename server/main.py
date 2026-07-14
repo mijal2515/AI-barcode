@@ -398,7 +398,7 @@ async def export_history():
             cursor.execute(query)
             rows = cursor.fetchall()
         df = pd.DataFrame(rows, columns=[
-            "시간", "구분", "악기분류", "바코드", "악기 고유번호", "악기명", "신청수량", "기관명", "지역", "반납예정일", "상태",
+            "시간", "구분", "악기분류", "바코드", "악기 고유번호", "물품명", "신청수량", "기관명", "지역", "반납예정일", "상태",
         ])
 
         today_str = datetime.now().strftime("%Y-%m-%d")
@@ -433,7 +433,7 @@ async def export_history():
                 return f"{start_date} ~ {due}"
             df["대여기간"] = df.apply(build_rental_period, axis=1)
             df = df.drop(columns=["반납예정일"])
-            df = df[["시간", "구분", "악기분류", "바코드", "악기 고유번호", "악기명", "신청수량", "기관명", "지역", "대여기간", "상태"]]
+            df = df[["시간", "구분", "악기분류", "바코드", "악기 고유번호", "물품명", "신청수량", "기관명", "지역", "대여기간", "상태"]]
         
         # 6. 메모리 버퍼(BytesIO)에 openpyxl 엔진을 사용하여 엑셀 파일 빌드
         output = io.BytesIO()
@@ -479,9 +479,9 @@ async def import_history(file: UploadFile = File(...)):
         contents = await file.read()
         df = pd.read_excel(io.BytesIO(contents))
         
-        required_columns = ["시간", "구분", "바코드", "물품명", "대여처"]
+        required_columns = ["시간", "구분", "바코드", "물품명", "기관명"]
         if not all(col in df.columns for col in required_columns):
-            return {"status": "error", "message": "엑셀 파일의 첫 줄(헤더)은 '시간', '구분', '바코드', '물품명', '대여처'여야 합니다."}
+            return {"status": "error", "message": "엑셀 파일의 첫 줄(헤더)에 '시간', '구분', '바코드', '물품명', '기관명' 열이 모두 있어야 합니다."}
 
         optional_columns = ["악기분류", "악기 고유번호", "신청수량", "지역", "대여기간", "상태"]
 
@@ -494,7 +494,7 @@ async def import_history(file: UploadFile = File(...)):
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
-            # 🛠️ 이미 DB에 있는 (시간, 구분, 바코드, 물품명, 대여처) 조합을 미리 조회해 중복 업로드를 걸러냅니다.
+            # 🛠️ 이미 DB에 있는 (시간, 구분, 바코드, 물품명, 기관명) 조합을 미리 조회해 중복 업로드를 걸러냅니다.
             cursor.execute("SELECT time, type, barcode, name, school FROM history")
             existing_rows = {tuple('' if v is None else v for v in row.values()) for row in cursor.fetchall()}
 
@@ -505,7 +505,7 @@ async def import_history(file: UploadFile = File(...)):
                 type_val = str(row["구분"]).strip() if pd.notnull(row["구분"]) else ""
                 barcode_val = str(row["바코드"]).strip() if pd.notnull(row["바코드"]) else ""
                 name_val = str(row["물품명"]).strip() if pd.notnull(row["물품명"]) else ""
-                school_val = str(row["대여처"]).strip() if pd.notnull(row["대여처"]) else ""
+                school_val = str(row["기관명"]).strip() if pd.notnull(row["기관명"]) else ""
                 category_val = str(row["악기분류"]).strip() if "악기분류" in df.columns and pd.notnull(row["악기분류"]) else ""
                 instrument_number_val = str(row["악기 고유번호"]).strip() if "악기 고유번호" in df.columns and pd.notnull(row["악기 고유번호"]) else ""
                 region_val = str(row["지역"]).strip() if "지역" in df.columns and pd.notnull(row["지역"]) else ""

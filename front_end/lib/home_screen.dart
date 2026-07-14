@@ -1377,7 +1377,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                 const Text('📜 기록 엑셀 업로드', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 10),
                 const Text(
-                  "'시간', '구분', '바코드', '물품명', '대여처' 열은 필수이고, '악기분류', '악기 고유번호', '신청수량', '지역', '대여기간', '상태' 열은 있으면 함께 저장됩니다.",
+                  "'시간', '구분', '바코드', '물품명', '기관명' 열은 필수이고, '악기분류', '악기 고유번호', '신청수량', '지역', '대여기간', '상태' 열은 있으면 함께 저장됩니다.",
                   style: TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 20),
