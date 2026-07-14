@@ -517,6 +517,39 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
   }
 
+  Future<void> _uploadHistoryExcelToServer() async {
+    try {
+      FilePickerResult? result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls'],
+        withData: true,
+      );
+      if (result != null) {
+        var fileBytes = result.files.first.bytes;
+        var fileName = result.files.first.name;
+        if (fileBytes == null) return;
+
+        _showSnackBar('⏳ 기록 엑셀 데이터를 서버로 전송 중입니다...');
+        var uri = Uri.parse('$SERVER_URL/history/import');
+        var request = http.MultipartRequest('POST', uri);
+        request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
+
+        var streamedResponse = await request.send();
+        var response = await http.Response.fromStream(streamedResponse);
+        var decodedData = jsonDecode(utf8.decode(response.bodyBytes));
+
+        if (decodedData['status'] == 'success') {
+          _showSnackBar('🎉 ${decodedData['message']}');
+          await _fetchHistoryLogs();
+        } else {
+          _showSnackBar('❌ ${decodedData['message'] ?? '기록 엑셀 업로드에 실패했습니다.'}');
+        }
+      }
+    } catch (e) {
+      _showSnackBar("❌ 오류 발생: $e");
+    }
+  }
+
   // 🔥 핵심 수정: id 기반 매칭으로 엑셀 출력하도록 변경
   Future<void> _downloadSelectedToExcel() async {
     if (_selectedIds.isEmpty) {
@@ -1323,7 +1356,40 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                     icon: const Icon(Icons.upload, color: Colors.green),
                     label: const Text('엑셀 파일 업로드하기', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                     style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.green), 
+                      side: const BorderSide(color: Colors.green),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Card(
+          elevation: 2,
+          margin: const EdgeInsets.only(bottom: 20),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('📜 기록 엑셀 업로드', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 10),
+                const Text(
+                  "'시간', '구분', '바코드', '물품명', '대여처' 열은 필수이고, '악기분류', '악기 고유번호', '신청수량', '지역', '대여기간', '상태' 열은 있으면 함께 저장됩니다.",
+                  style: TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: _uploadHistoryExcelToServer,
+                    icon: const Icon(Icons.history_toggle_off_rounded, color: Colors.blue),
+                    label: const Text('기록 엑셀 업로드하기', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.blue),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
