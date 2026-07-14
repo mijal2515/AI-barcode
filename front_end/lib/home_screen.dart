@@ -70,7 +70,9 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         final barcode = (item['barcode'] ?? '').toString().toLowerCase();
         final school = (item['school'] ?? '').toString().toLowerCase();
         final region = (item['region'] ?? '').toString().toLowerCase();
-        return name.contains(query) || barcode.contains(query) || school.contains(query) || region.contains(query);
+        final category = (item['category'] ?? '').toString().toLowerCase();
+        return name.contains(query) || barcode.contains(query) || school.contains(query) ||
+            region.contains(query) || category.contains(query);
       }).toList();
     });
   }
@@ -909,7 +911,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         TextField(
           controller: _searchController,
           decoration: InputDecoration(
-            hintText: '🔍 바코드, 악기명, 기관명 또는 지역 검색...',
+            hintText: '🔍 바코드, 악기명, 악기분류, 기관명 또는 지역 검색...',
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
@@ -1053,7 +1055,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
               child: TextField(
                 controller: _historySearchController,
                 decoration: InputDecoration(
-                  hintText: '🔍 DB 기록 검색 (학교명, 악기명 등)...',
+                  hintText: '🔍 기록 검색 (날짜, 기관명, 악기명 등)...',
                   filled: true,
                   fillColor: Colors.white,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
