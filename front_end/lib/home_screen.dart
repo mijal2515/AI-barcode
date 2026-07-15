@@ -676,6 +676,61 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
   }
 
+  Future<void> _downloadInstrumentsToExcel() async {
+    if (_filteredInstruments.isEmpty) {
+      _showSnackBar('❗ 다운로드할 악기 데이터가 없습니다.');
+      return;
+    }
+
+    try {
+      var excel = Excel.createExcel();
+      String sheetName = "악기현황";
+      String defaultSheet = excel.getDefaultSheet() ?? 'Sheet1';
+      excel.rename(defaultSheet, sheetName);
+      Sheet sheetObject = excel[sheetName];
+
+      List<String> headers = ["악기분류", "악기명", "바코드", "악기 고유번호", "상태", "기관명", "지역"];
+      for (int i = 0; i < headers.length; i++) {
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0)).value = TextCellValue(headers[i]);
+      }
+
+      for (int i = 0; i < _filteredInstruments.length; i++) {
+        final item = _filteredInstruments[i];
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: i + 1)).value = TextCellValue((item['category'] ?? '').toString());
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: i + 1)).value = TextCellValue((item['name'] ?? '').toString());
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: i + 1)).value = TextCellValue((item['barcode'] ?? '').toString());
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: i + 1)).value = TextCellValue((item['instrument_number'] ?? '').toString());
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: i + 1)).value = TextCellValue((item['status'] ?? '보관중').toString());
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: i + 1)).value = TextCellValue((item['school'] ?? '').toString());
+        sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: i + 1)).value = TextCellValue((item['region'] ?? '').toString());
+      }
+
+      if (kIsWeb) {
+        final bytes = excel.encode();
+        if (bytes != null) {
+          final blob = html.Blob([bytes], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          final url = html.Url.createObjectUrlFromBlob(blob);
+          html.AnchorElement(href: url)
+            ..setAttribute("download", "악기현황_${DateTime.now().toString().split(' ')[0]}.xlsx")
+            ..click();
+          html.Url.revokeObjectUrl(url);
+          _showSnackBar('📥 악기현황 ${_filteredInstruments.length}건이 엑셀 파일로 다운로드되었습니다.');
+        }
+      } else {
+        final bytes = excel.encode();
+        if (bytes != null) {
+          final directory = await getApplicationDocumentsDirectory();
+          final filePath = "${directory.path}/악기현황_${DateTime.now().millisecondsSinceEpoch}.xlsx";
+          final file = io.File(filePath);
+          await file.writeAsBytes(bytes);
+          _showSnackBar('📥 파일이 성공적으로 저장되었습니다: $filePath');
+        }
+      }
+    } catch (e) {
+      _showSnackBar('❌ 엑셀 다운로드 중 오류가 발생했습니다: $e');
+    }
+  }
+
   Widget _buildCheckInOutTab() {
     return DefaultTabController(
       length: 2,
@@ -726,7 +781,8 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
   }
 
   Widget _buildSubActionPage(String type, TextEditingController controller, List<dynamic> cart, StatusPalette palette) {
-    return Column(
+    return SingleChildScrollView(
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         TextField(
@@ -779,7 +835,8 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
           ],
         ),
         const SizedBox(height: 10),
-        Expanded(
+        SizedBox(
+          height: 230,
           child: cart.isEmpty
               ? Center(
                   child: Column(
@@ -902,21 +959,39 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
           ),
         ),
       ],
+      ),
     );
   }
 
   Widget _buildInventoryTab() {
     return Column(
       children: [
-        TextField(
-          controller: _searchController,
-          decoration: InputDecoration(
-            hintText: '🔍 바코드, 악기명, 악기분류, 기관명 또는 지역 검색...',
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-            prefixIcon: const Icon(Icons.search),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: '🔍 바코드, 악기명, 악기분류, 기관명 또는 지역 검색...',
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  prefixIcon: const Icon(Icons.search),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            ElevatedButton.icon(
+              onPressed: _downloadInstrumentsToExcel,
+              icon: const Icon(Icons.file_download_outlined, size: 18),
+              label: const Text('엑셀 다운로드'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green.shade700,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 15),
         Expanded(
