@@ -132,7 +132,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     }
 
     setState(() {
-      targetCart.add(Map<String, dynamic>.from(instrument)..['quantity'] = 1);
+      targetCart.add(Map<String, dynamic>.from(instrument));
     });
 
     _clearBarcodeTextField(actionType);
@@ -177,6 +177,8 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
         String regionForHistory = actionType == '출고'
             ? regionText
             : (scannedItem['region'] ?? '').toString();
+        // 🎯 신청수량 = 대기 목록에 담긴 것 중 같은 이름(악기 종류)의 개수
+        int sameNameCount = targetCart.where((i) => i['name'] == scannedItem['name']).length;
 
         var url = Uri.parse('$SERVER_URL/history');
         await http.post(
@@ -189,7 +191,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
             "name": scannedItem['name'].toString(),
             "category": (scannedItem['category'] ?? '').toString(),
             "instrument_number": (scannedItem['instrument_number'] ?? '').toString(),
-            "quantity": scannedItem['quantity'] ?? 1,
+            "quantity": sameNameCount,
             "school": schoolForHistory,
             "region": regionForHistory,
             "rental_due": actionType == '출고' ? rentalDueText : '',
@@ -769,17 +771,6 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
     );
   }
 
-  Widget _qtyStepButton(IconData icon, VoidCallback onTap) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Icon(icon, size: 18, color: AppColors.textSecondary),
-      ),
-    );
-  }
-
   Widget _buildSubActionPage(String type, TextEditingController controller, List<dynamic> cart, StatusPalette palette) {
     return SingleChildScrollView(
       child: Column(
@@ -860,7 +851,7 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final item = cart[index];
-                      final int quantity = (item['quantity'] ?? 1) as int;
+                      final int sameNameCount = cart.where((i) => i['name'] == item['name']).length;
                       return ListTile(
                         dense: true,
                         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
@@ -869,12 +860,14 @@ class _InstrumentLibraryScreenState extends State<InstrumentLibraryScreen> {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            _qtyStepButton(Icons.remove, () => setState(() {
-                                  if (quantity > 1) item['quantity'] = quantity - 1;
-                                })),
-                            SizedBox(width: 22, child: Text('$quantity', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w800))),
-                            _qtyStepButton(Icons.add, () => setState(() => item['quantity'] = quantity + 1)),
-                            const SizedBox(width: 4),
+                            if (sameNameCount > 1) ...[
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(color: palette.bg, borderRadius: BorderRadius.circular(20)),
+                                child: Text('동일 품목 $sameNameCount개', style: TextStyle(color: palette.fg, fontWeight: FontWeight.w800, fontSize: 11.5)),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
                             IconButton(
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(),
